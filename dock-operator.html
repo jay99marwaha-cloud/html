@@ -1,0 +1,262 @@
+  <!DOCTYPE html>
+<html>
+<head>
+  <title>Shopfloor Operator Entry</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      font-famil
+      
+      
+      y: Arial, sans-serif;
+      background: #f4f6f8;
+      padding: 20px;
+    }
+    label {
+      font-weight: bold;
+      margin-top: 10px;
+      display: block;
+    }
+    select, input, button {
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      margin-top: 6px;
+    }
+    button {
+      background: #0078d7;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      margin-top: 12px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      background: white;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: center;
+      font-size: 14px;
+    }
+    th {
+      background: #eee;
+    }
+    .ok { color: green; font-weight: bold; }
+    .err { color: red; font-weight: bold; }
+  </style>
+
+</head>
+
+<body>
+
+
+<h2>Production Entry</h2>
+
+<label>Product</label>
+<select id="product" onchange="updateSteps()">
+  <option value="">Select product</option>
+  <option value="Dock">Dock</option>
+  <option value="Node">Node</option>
+  <option value="Clip">Clip</option>
+</select>
+
+<label>Step</label>
+<select id="step"></select>
+
+<label>Quantity</label>
+<input type="number" id="qty" placeholder="Enter quantity" />
+
+<label>Operator Name</label>
+<input type="text" id="operator" placeholder="Your name" />
+
+<button onclick="recordProduction()">CONFIRM</button>
+
+<div id="message"></div>
+
+<h3>Today's Entries (Local)</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Time</th>
+      <th>Product</th>
+      <th>Step</th>
+      <th>Qty</th>
+      <th>Operator</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody id="logTable"></tbody>
+</table>
+
+<script>
+const OFFLINE_MODE = true; // true = offline test, false = Make
+
+/* ================= CONFIG ================= */
+const MAKE_WEBHOOK = "https://hook.eu1.make.com/rypxt8bvt4b2746e7ykn22rne40p7rf8";
+function sendEvent(payload) {
+  if (!OFFLINE_MODE) {
+    fetch(MAKE_WEBHOOK, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+    .then(() => console.log("🟢 SENT TO MAKE:", payload))
+    .catch(err => console.error("❌ MAKE ERROR:", err));
+  }
+}
+
+  
+
+
+/* ================= STEP DEFINITIONS ================= */
+const STEP_DEFINITIONS = {
+  Dock: [
+    { code: "S1", label: "S1 – Bottom Prep (Dock Bottom + 4 Rubber Feet)" },
+    { code: "S2", label: "S2 – USB PCB + 2 Small Screws" },
+    { code: "S3", label: "S3 – Top PCB Assembly (Dock Top + Gateway PCB)" },
+    { code: "S4", label: "S4 – Interface Boards + Screws" },
+    { code: "S5", label: "S5 – PCB Final Fix" },
+    { code: "S6", label: "S6 – Battery + SIM + Antennas" },
+    { code: "S7", label: "S7 – IMX Flash" },
+    { code: "S8", label: "S8 – NRF Flash + Onboarding" },
+    { code: "S9", label: "S9 – Faceplate (Dock Finished)" }
+  ],
+  Node: [
+    { code: "S1", label: "S1 – Gateway Bottom Prep" },
+    { code: "S2", label: "S2 – USB PCB" },
+    { code: "S3", label: "S3 – Top PCB Assembly" },
+    { code: "S4", label: "S4 – PCB Final Fix" },
+    { code: "S5", label: "S5 – Battery + SIM + Antennas" },
+    { code: "S6", label: "S6 – IMX Flash" },
+    { code: "S7", label: "S7 – NRF Flash + Onboarding" },
+    { code: "S8", label: "S8 – Faceplate (Node Finished)" }
+  ],
+  Clip: [
+    { code: "S1", label: "S1 – Bottom Preparation" },
+    { code: "S2", label: "S2 – Pogo Pin Assembly" },
+    { code: "S3", label: "S3 – PCB Flash" },
+    { code: "S4", label: "S4 – Gasket + Battery + LED" },
+    { code: "S5", label: "S5 – Assemble Top" },
+    { code: "S6", label: "S6 – Put Lid" },
+    { code: "S7", label: "S7 – QC 1" },
+    { code: "S8", label: "S8 – QC 2" },
+    { code: "S9", label: "S9 – QC 3" },
+    { code: "S10", label: "S10 – Grafana + Labelling (Finished)" }
+  ]
+};
+
+/* ================= LOCAL LOG ================= */
+let localLog = [];
+
+/* ================= FUNCTIONS ================= */
+
+function updateSteps() {
+  const product = document.getElementById("product").value;
+  const stepSelect = document.getElementById("step");
+  stepSelect.innerHTML = "";
+
+  if (!STEP_DEFINITIONS[product]) return;
+
+  STEP_DEFINITIONS[product].forEach(s => {
+    const opt = document.createElement("option");
+    opt.value = s.code;     // IMPORTANT: only S1, S2… is sent
+    opt.textContent = s.label;
+    stepSelect.appendChild(opt);
+  });
+}
+
+function recordProduction() {
+  const payload = {
+    product: document.getElementById("product").value,
+    step: document.getElementById("step").value,
+    qty: Number(document.getElementById("qty").value),
+    operator: document.getElementById("operator").value,
+    timestamp: new Date().toISOString()
+  };
+// ✅ VALIDATION FIRST
+  if (!payload.product || !payload.step || !payload.qty || !payload.operator) {
+    showMessage("Please fill all fields", true);
+    return;
+  }
+
+  // ✅ OFFLINE SAVE (CORRECT PLACE)
+  const key = "offline_events";
+  const existing = JSON.parse(localStorage.getItem(key) || "[]");
+  existing.push(payload);
+  localStorage.setItem(key, JSON.stringify(existing));
+  console.log("🟢 OFFLINE EVENT SAVED:", payload);
+
+  // ✅ KEEP MAKE / SEND LOGIC
+  sendEvent(payload);
+
+  // Local UI log (unchanged)
+  localLog.push({
+    time: new Date().toLocaleTimeString(),
+    product: payload.product,
+    step: payload.step,
+    qty: payload.qty,
+    operator: payload.operator
+  });
+
+  renderLog();
+  showMessage("✅ Entry sent", false);
+  document.getElementById("qty").value = "";
+  document.getElementById("qty").focus();
+}
+
+
+
+
+function renderLog() {
+  const tbody = document.getElementById("logTable");
+  tbody.innerHTML = "";
+  localLog.forEach((e, i) => {
+    tbody.innerHTML += `
+      <tr>
+        <td>${e.time}</td>
+        <td>${e.product}</td>
+        <td>${e.step}</td>
+        <td>${e.qty}</td>
+        <td>${e.operator}</td>
+        <td>
+          <button onclick="editEntry(${i})">Edit</button>
+          <button onclick="deleteEntry(${i})">Delete</button>
+        </td>
+      </tr>`;
+  });
+}
+
+function deleteEntry(i) {
+  if (!confirm("Delete this local entry?")) return;
+  localLog.splice(i, 1);
+  renderLog();
+}
+
+function editEntry(i) {
+  const e = localLog[i];
+  document.getElementById("product").value = e.product;
+  updateSteps();
+  document.getElementById("step").value = e.step;
+  document.getElementById("qty").value = e.qty;
+  document.getElementById("operator").value = e.operator;
+  deleteEntry(i);
+}
+
+function showMessage(text, err) {
+  const el = document.getElementById("message");
+  el.className = err ? "err" : "ok";
+  el.innerText = text;
+}
+
+
+
+</script>
+
+</body>
+</html>
+	

@@ -1,0 +1,1834 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AssistMe Inventory App</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 18px; background:#f4f6f8; }
+    h1 { margin-bottom: 6px; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    .card { border:1px solid #ddd; padding:12px; border-radius:6px; background:#fff; }
+    input, button, select, textarea { padding:8px; margin:6px 0; width:100%; box-sizing:border-box;}
+    table { width:100%; border-collapse:collapse; margin-top:8px;}
+    th, td { border:1px solid #eee; padding:8px; text-align:left; }
+    .muted { color:#666; font-size:0.9em; }
+    .danger { background:#d9534f; color:white; border:none; padding:8px; border-radius:4px; cursor:pointer; }
+    .btn { background:#0078d7; color:white; border:none; padding:8px; border-radius:4px; cursor:pointer; }
+    .btn-secondary { background:#555; color:white; border:none; padding:8px; border-radius:4px; cursor:pointer; }
+    .small-btn { padding:4px 8px; font-size:0.85em; }
+
+    /* Color coding for inventory rows */
+    .inv-critical td { background:#f8d7da; }   /* very low / negative (red-ish) */
+    .inv-low td      { background:#fff3cd; }   /* low (yellow) */
+    .inv-medium td   { background:#e2e3ff; }   /* medium (light blue/purple) */
+    .inv-ok td       { background:#d4edda; }   /* safe (green) */
+
+    /* Make inventory table area scrollable if it grows large */
+    #invTableArea {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    /* Scorecard styling */
+    .scorecard {
+      display:grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap:12px;
+      margin: 10px 0 16px 0;
+    }
+    .score {
+      background:#fff;
+      border-radius:8px;
+      padding:10px;
+      border:1px solid #ddd;
+      text-align:center;
+      box-shadow:0 1px 3px rgba(0,0,0,0.05);
+    }
+    .score-title {
+      font-size:13px;
+      color:#555;
+      text-transform:uppercase;
+      letter-spacing:0.5px;
+    }
+    .score-value {
+      font-size:24px;
+      font-weight:bold;
+      margin-top:4px;
+    }
+    .score-caption {
+      font-size:11px;
+      color:#777;
+      margin-top:2px;
+    }
+
+    /* Dock WIP table */
+    #dockWIPArea table { font-size:0.9em; }
+    #dockLogArea table { font-size:0.9em; }
+  </style>
+</head>
+<body>
+  <h1>AssistMe Inventory & Production</h1>
+  <p class="muted">Browser version – all data is stored locally in this browser (on this PC).</p>
+
+  <!-- Live Scorecard -->
+  <div class="scorecard">
+    <div class="score">
+      <div class="score-title">Dock</div>
+      <div class="score-value" id="scoreDock">0</div>
+      <div class="score-caption">Max units buildable now</div>
+    </div>
+    <div class="score">
+      <div class="score-title">Node</div>
+      <div class="score-value" id="scoreNode">0</div>
+      <div class="score-caption">Max units buildable now</div>
+    </div>
+    <div class="score">
+      <div class="score-title">Clip</div>
+      <div class="score-value" id="scoreClip">0</div>
+      <div class="score-caption">Max units buildable now</div>
+    </div>
+  </div>
+
+  <div class="grid">
+
+    <!-- INVENTORY -->
+    <div class="card">
+      <h3>Inventory — Add / Update / Edit</h3>
+      <input id="invName" placeholder="Component name (e.g. Dock Top)" />
+      <input id="invQty" type="number" placeholder="Quantity (add/subtract or set when editing)" />
+      <input id="invUser" placeholder="Your name (who is updating)" />
+      <button class="btn" id="invAddBtn">Save Inventory</button>
+      <p class="muted">
+        To fix a mistake: click <b>Edit</b> in the table, change quantity (and/or name) and press <b>Save Inventory</b>.<br>
+        To remove an item completely, click <b>Delete</b>.<br>
+        <b>Min Stock</b> is calculated so you can always build
+        <b>100 Docks, 80 Nodes, 200 Clips</b> with that component.<br>
+        Color legend: red = ≤0, yellow = below min stock, light blue = between 1× and 2× min stock, green = above 2× min stock.
+      </p>
+
+      <!-- Search bar for inventory -->
+      <input id="invSearch" placeholder="Search component (e.g. screw, dock, battery)" />
+
+      <div id="invTableArea"></div>
+    </div>
+
+    <!-- BOM -->
+    <div class="card">
+      <h3>BOM — Bill of Materials (with Edit/Delete)</h3>
+      <input id="bomProduct" placeholder="Product name (Dock / Node / Clip)" />
+      <input id="bomComponent" placeholder="Component name" />
+      <input id="bomQty" type="number" placeholder="Qty per unit" />
+      <input id="bomUser" placeholder="Your name (who is editing BOM)" />
+      <button class="btn-secondary" id="bomAddBtn">Save BOM Entry</button>
+      <p class="muted">Use Save to add new entries or update the one you are editing.</p>
+
+      <!-- Search bar for BOM -->
+      <input id="bomSearch" placeholder="Search BOM (product or component)" />
+
+      <div id="bomTableArea"></div>
+    </div>
+
+    <!-- PRODUCTION (Node & Clip, Dock via WIP) -->
+    <div class="card">
+      <h3>Production Entry (Node & Clip)</h3>
+      <input id="prodProduct" placeholder="Product name (Node / Clip)" />
+      <input id="prodQty" type="number" placeholder="Quantity produced" />
+      <input id="prodUser" placeholder="Your name (operator)" />
+      <button class="btn" id="prodAddBtn">Record Production</button>
+      <p class="muted">
+        ⚠️ <b>Important:</b> Do NOT use this form for Dock. Use the "Dock Process Entry (S1–S9)" card instead.<br>
+        You can now <b>Edit</b> or <b>Delete</b> Node/Clip entries. Editing adjusts inventory automatically.<br>
+        Dock production created from S9 cannot be edited here (only via Dock WIP).
+      </p>
+      <div id="prodLogArea"></div>
+    </div>
+
+    <!-- DOCK PROCESS WIP -->
+    <div class="card">
+      <h3>Dock Process Entry (S1–S9 WIP)</h3>
+      <p class="muted">
+        Track Dock production step-by-step. Steps must be done in order: S1 → S2 → ... → S9.<br>
+        The system blocks skipping (e.g. cannot jump from S1 directly to S5).<br>
+        You can edit/delete only the <b>latest</b> Dock step to keep WIP & inventory consistent.
+      </p>
+      <select id="dockStep">
+        <option value="">Select Step</option>
+        <option value="S1">S1 - Bottom Prep (Dock Bottom + 4 Rubber Feet)</option>
+        <option value="S2">S2 - USB PCB + 2 Small Screws</option>
+        <option value="S3">S3 - Top PCB Assembly (Dock Top + Gateway PCB)</option>
+        <option value="S4">S4 - Interface Boards + Screws</option>
+        <option value="S5">S5 - PCB Final Fix (2 Small Screws)</option>
+        <option value="S6">S6 - Battery + SIM + 2 WiFi + 1 LTE</option>
+        <option value="S7">S7 - IMX Flash</option>
+        <option value="S8">S8 - NRF Flash + Onboarding</option>
+        <option value="S9">S9 - Faceplate (Dock Finished)</option>
+      </select>
+      <input id="dockQty" type="number" placeholder="Quantity processed at this step" />
+      <input id="dockUser" placeholder="Operator name" />
+      <button class="btn" id="dockStepBtn">Record Dock Step</button>
+
+      <h4>Dock WIP Overview</h4>
+      <div id="dockWIPArea"></div>
+
+      <h4>Dock Step Log (latest first)</h4>
+      <div id="dockLogArea"></div>
+    </div>
+     <!-- NODE PROCESS WIP -->
+<div class="card">
+  <h3>Node Process Entry (S1–S8 WIP)</h3>
+
+  <select id="nodeStep">
+    <option value="">Select Step</option>
+    <option value="S1">S1 - Gateway Bottom Prep</option>
+    <option value="S2">S2 - USB PCB</option>
+    <option value="S3">S3 - Top PCB Assembly</option>
+    <option value="S4">S4 - PCB Final Fix</option>
+    <option value="S5">S5 - Battery + SIM + Antennas</option>
+    <option value="S6">S6 - IMX Flash</option>
+    <option value="S7">S7 - NRF Flash + Onboarding</option>
+    <option value="S8">S8 - Faceplate (Node Finished)</option>
+  </select>
+
+  <input id="nodeQty" type="number" placeholder="Quantity processed at this step" />
+  <input id="nodeUser" placeholder="Operator name" />
+  <button class="btn" id="nodeStepBtn">Record Node Step</button>
+
+  <h4>Node WIP Overview</h4>
+  <div id="nodeWIPArea"></div>
+
+  <h4>Node Step Log</h4>
+  <div id="nodeLogArea"></div>
+</div>
+<!-- CLIP PROCESS WIP -->
+<div class="card">
+  <h3>Clip Process Entry (S1–S10 WIP)</h3>
+
+  <select id="clipStep">
+    <option value="">Select Step</option>
+    <option value="S1">S1 - Bottom Preparation</option>
+    <option value="S2">S2 - Pogo Pin Assembly</option>
+    <option value="S3">S3 - PCB Flash</option>
+    <option value="S4">S4 - Gasket + Battery + LED</option>
+    <option value="S5">S5 - Assemble Top</option>
+    <option value="S6">S6 - Put Lid</option>
+    <option value="S7">S7 - QC 1</option>
+    <option value="S8">S8 - QC 2</option>
+    <option value="S9">S9 - QC 3</option>
+    <option value="S10">S10 - Grafana + Labelling (Finished)</option>
+  </select>
+
+  <input id="clipQty" type="number" placeholder="Quantity processed" />
+  <input id="clipUser" placeholder="Operator name" />
+  <button class="btn" id="clipStepBtn">Record Clip Step</button>
+
+  <h4>Clip WIP Overview</h4>
+  <div id="clipWIPArea"></div>
+
+  <h4>Clip Step Log</h4>
+  <div id="clipLogArea"></div>
+</div>
+
+
+    <!-- TOOLS -->
+    <div class="card">
+      <h3>Tools & Reports</h3>
+
+      <button class="btn" id="calcBtn">Calculate Max Units (per product)</button>
+      <pre id="calcOutput" style="white-space:pre-wrap; max-height:150px; overflow:auto;"></pre>
+
+      <h4>Daily Production Report</h4>
+      <input id="reportDate" type="date" />
+      <button class="btn-secondary" id="reportBtn">Show Daily Report</button>
+      <button class="btn-secondary" id="printBtn">Print / Save Daily Report as PDF</button>
+      <div id="dailyReportArea"></div>
+
+      <h4>Export / Import</h4>
+      <button class="btn" id="exportJsonBtn">Export FULL Backup (JSON)</button>
+<button class="btn" id="exportBtn">Export Production to CSV (Excel)</button>
+<button class="btn-secondary" id="importBtn">Import data (JSON)</button>
+<input type="file" id="fileInput" style="display:none" />
+
+      <h4>Danger Zone</h4>
+      <button id="resetBtn" class="danger">Reset / Clear All Data</button>
+    </div>
+
+  </div>
+
+<script>
+const OFFLINE_MODE = true; // true = offline test, false = Make
+// ===== MAKE.COM WEBHOOK (INVENTORY SYNC) =====
+const MAKE_INV_WEBHOOK = "https://hook.eu1.make.com/i12ie93cpkyb9l85kc5ac8nuqpcmwkra";
+const MAKE_FETCH_WEBHOOK = "https://hook.eu1.make.com/uflg8xk8klav43fal8lctsobc9pxqffm";
+
+
+
+
+
+// Generic sender to Make.com
+function sendToMake(url, payload) {
+  fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  })
+  .then(() => console.log("Sent to Make:", payload))
+  .catch(err => console.error("Make sync failed:", err));
+}
+
+
+		
+const STORAGE_KEY = 'assistme_app_data_v4';
+
+const dockSteps = ["S1","S2","S3","S4","S5","S6","S7","S8","S9"];
+
+// Human-readable descriptions for Dock steps
+const dockStepDescriptions = {
+  S1: "S1 - Bottom Prep (Dock Bottom + 4 Rubber Feet)",
+  S2: "S2 - USB PCB + 2 Small Screws",
+  S3: "S3 - Top PCB Assembly (Dock Top + Gateway PCB)",
+  S4: "S4 - Interface Boards + Screws",
+  S5: "S5 - PCB Final Fix (2 Small Screws)",
+  S6: "S6 - Battery + SIM + 2 WiFi + 1 LTE",
+  S7: "S7 - IMX Flash",
+  S8: "S8 - NRF Flash + Onboarding",
+  S9: "S9 - Faceplate (Dock Finished)"
+};
+
+// Dock step BOM (what each step consumes for ONE Dock)
+const dockProcessBOM = {
+  S1: [
+    { component: "Dock Bottom", qty: 1 },
+    { component: "Rubber Feet", qty: 4 }
+  ],
+  S2: [
+    { component: "Screw Small", qty: 2 }
+  ],
+  S3: [
+    { component: "Dock Top",    qty: 1 },
+    { component: "Gateway PCB", qty: 1 }
+  ],
+  S4: [
+    { component: "Interface Board", qty: 2 },
+    { component: "Screw Small",     qty: 4 }
+  ],
+  S5: [
+    { component: "Screw Small", qty: 2 }
+  ],
+  S6: [
+    { component: "Battery",         qty: 1 },
+    { component: "Wifi Antenna",    qty: 2 },
+    { component: "LTE Antenna",     qty: 1 },
+    { component: "Semtech Simcard", qty: 1 }
+  ],
+  S7: [],
+  S8: [],
+    S9: [
+    { component: "Dock Faceplate", qty: 1 }
+  ]
+};
+
+  
+// ===== NODE WIP DEFINITIONS (S1–S8) =====
+const nodeSteps = ["S1","S2","S3","S4","S5","S6","S7","S8"];
+
+const nodeStepDescriptions = {
+  S1: "S1 - Gateway Bottom Prep (Gateway Bottom + 4 Rubber Feet)",
+  S2: "S2 - USB PCB + 2 Small Screws",
+  S3: "S3 - Top PCB Assembly (Gateway Top + Gateway PCB)",
+  S4: "S4 - PCB Final Fix (2 Small Screws)",
+  S5: "S5 - Battery + SIM + 2 WiFi + 1 LTE",
+  S6: "S6 - IMX Flash",
+  S7: "S7 - NRF Flash + Onboarding",
+  S8: "S8 - Faceplate (Node Finished)"
+};
+
+// What each step consumes for ONE Node
+const nodeProcessBOM = {
+  S1: [
+    { component: "Gateway Bottom", qty: 1 },
+    { component: "Rubber Feet", qty: 4 }
+  ],
+  S2: [
+    { component: "Screw Small", qty: 2 }
+  ],
+  S3: [
+    { component: "Gateway Top", qty: 1 },
+    { component: "Gateway PCB", qty: 1 }
+  ],
+  S4: [
+    { component: "Screw Small", qty: 2 }
+  ],
+  S5: [
+    { component: "Battery", qty: 1 },
+    { component: "Semtech Simcard", qty: 1 },
+    { component: "Wifi Antenna", qty: 2 },
+    { component: "LTE Antenna", qty: 1 }
+  ],
+  S6: [],
+  S7: [],
+  S8: [
+    { component: "Node Faceplate", qty: 1 }
+  ]
+};
+
+// ===== CLIP WIP DEFINITIONS (S1–S10) =====
+const clipSteps = ["S1","S2","S3","S4","S5","S6","S7","S8","S9","S10"];
+
+const clipStepDescriptions = {
+  S1: "S1 - Bottom Preparation (Clip Bottom + BME Filter)",
+  S2: "S2 - Pogo Pin Assembly in Clip Top (Clip Top + 6 Pogo Pins)",
+  S3: "S3 - Depanel Clip PCBs + Flashing (Clip PCB)",
+  S4: "S4 - Assembly of Gasket + Battery + LED",
+  S5: "S5 - Assemble the Top",
+  S6: "S6 - Put the Lid (Clip Lid)",
+  S7: "S7 - QC 1 (Charging on Dock)",
+  S8: "S8 - QC 2 (Putting on ICP)",
+  S9: "S9 - QC 3 (Back to Dock)",
+  S10:"S10 - Check Grafana + Labelling (Clip Finished)"
+};
+
+// What each step consumes for ONE Clip
+const clipProcessBOM = {
+  S1: [
+    { component: "Clip Bottom", qty: 1 },
+    { component: "BME Filter", qty: 1 }
+  ],
+  S2: [
+    { component: "Clip Top", qty: 1 },
+    { component: "Pogo Pins", qty: 6 }
+  ],
+  S3: [
+    { component: "Clip PCB", qty: 1 }
+  ],
+  S4: [
+    { component: "Battery", qty: 1 },
+    { component: "LED", qty: 1 }
+  ],
+  S5: [ ],
+  S6: [
+    { component: "Clip Lid", qty: 1 }
+  ],
+  S7: [ ],
+  S8: [ ],
+  S9: [ ],
+  S10: [ ]
+
+};
+
+let state = loadState();
+let currentEditInventoryKey = null;
+let currentEditBOMIndex = null;
+let currentEditProductionIndex = null;
+let currentEditDockIndex = null;
+
+let invSearchTerm = "";
+let bomSearchTerm = "";
+
+/* ---------- STATE & INITIAL DATA ---------- */
+
+function defaultDockWIP(){
+  return {
+    S1: 0, S2: 0, S3: 0, S4: 0, S5: 0,
+    S6: 0, S7: 0, S8: 0, S9: 0
+  };
+}
+function defaultNodeWIP(){
+  return {
+    S1: 0, S2: 0, S3: 0, S4: 0,
+    S5: 0, S6: 0, S7: 0, S8: 0
+  };
+}
+
+function defaultClipWIP(){
+  return {
+    S1: 0, S2: 0, S3: 0, S4: 0, S5: 0,
+    S6: 0, S7: 0, S8: 0, S9: 0, S10: 0
+  };
+}
+
+function defaultState(){
+  return {
+    inventory: {
+      // Original Dock-related stock
+      "Dock Top":       { qty:1200, lastUpdated:"", lastUser:"" },
+      "Dock Bottom":    { qty:1100, lastUpdated:"", lastUser:"" },
+      "Dock Faceplate": { qty:900,  lastUpdated:"", lastUser:"" },
+      "Pogo Pins":      { qty:4000, lastUpdated:"", lastUser:"" },
+      "Screw Small":    { qty:6000, lastUpdated:"", lastUser:"" },
+      "Screw Big":      { qty:2500, lastUpdated:"", lastUser:"" },
+      "Rubber Feet":    { qty:800,  lastUpdated:"", lastUser:"" },
+      "Battery":        { qty:500,  lastUpdated:"", lastUser:"" },
+      "LTE Antenna":    { qty:450,  lastUpdated:"", lastUser:"" },
+      "Wifi Antenna":   { qty:900,  lastUpdated:"", lastUser:"" },
+
+      // Extra components for Dock steps (start with 0 so we don't invent stock)
+      "Gateway PCB":     { qty:0, lastUpdated:"", lastUser:"" },
+      "Interface Board": { qty:0, lastUpdated:"", lastUser:"" },
+      "Semtech Simcard": { qty:0, lastUpdated:"", lastUser:"" },
+
+      // Node-related components (start 0, you can adjust)
+      "Node Case Top":    { qty:0, lastUpdated:"", lastUser:"" },
+      "Node Case Bottom": { qty:0, lastUpdated:"", lastUser:"" },
+
+      // Clip-related components (Clip Body)
+      "Clip Body":        { qty:0, lastUpdated:"", lastUser:"" }
+    },
+
+    bom: [
+      // --- Dock BOM (final) ---
+      {product:"Dock", component:"Dock Top",        qty:1, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Dock", component:"Dock Bottom",     qty:1, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Dock", component:"Dock Faceplate",  qty:1, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Dock", component:"Pogo Pins",       qty:1, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Dock", component:"Screw Small",     qty:6, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Dock", component:"Screw Big",       qty:4, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Dock", component:"Rubber Feet",     qty:4, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Dock", component:"Battery",         qty:1, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Dock", component:"LTE Antenna",     qty:1, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Dock", component:"Wifi Antenna",    qty:2, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Dock", component:"Gateway PCB",     qty:1, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Dock", component:"Interface Board", qty:2, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Dock", component:"Semtech Simcard", qty:1, createdAt:new Date().toISOString(), createdBy:"system"},
+
+      // --- Node BOM ---
+      {product:"Node", component:"Node Case Top",    qty:1, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Node", component:"Node Case Bottom", qty:1, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Node", component:"Battery",          qty:1, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Node", component:"Wifi Antenna",     qty:1, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Node", component:"Screw Small",      qty:4, createdAt:new Date().toISOString(), createdBy:"system"},
+
+      // --- Clip BOM ---
+      {product:"Clip", component:"Clip Body",        qty:1, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Clip", component:"Rubber Feet",      qty:1, createdAt:new Date().toISOString(), createdBy:"system"},
+      {product:"Clip", component:"Screw Small",      qty:2, createdAt:new Date().toISOString(), createdBy:"system"}
+    ],
+
+        production: [],           // final finished products (Dock via S9, Node & Clip via Production Entry)
+
+    // Dock WIP
+    dockWIP: defaultDockWIP(),   // how many Dock units in each step
+    dockStepLogs: [],            // log of Dock step entries
+
+    // Node WIP
+    nodeWIP: defaultNodeWIP(),   // how many Node units in each step
+    nodeStepLogs: [],            // log of Node step entries
+
+    // Clip WIP
+        clipWIP: defaultClipWIP(),   // how many Clip units in each step
+    clipStepLogs: []             // log of Clip step entries
+  };
+}
+
+
+function normaliseInventory(invObj) {
+  const result = {};
+  for (const key in invObj) {
+    const val = invObj[key];
+    if (typeof val === 'number') {
+      result[key] = { qty: val, lastUpdated: "", lastUser: "" };
+    } else {
+      result[key] = {
+        qty: val.qty ?? 0,
+        lastUpdated: val.lastUpdated ?? "",
+        lastUser: val.lastUser ?? ""
+      };
+    }
+  }
+  return result;
+}
+
+function loadState(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw) {
+      const parsed = JSON.parse(raw);
+
+      parsed.inventory    = normaliseInventory(parsed.inventory || {});
+      parsed.production   = parsed.production || [];
+      parsed.bom          = parsed.bom || [];
+
+      parsed.dockWIP      = parsed.dockWIP || defaultDockWIP();
+      parsed.dockStepLogs = parsed.dockStepLogs || [];
+
+      parsed.nodeWIP      = parsed.nodeWIP || defaultNodeWIP();
+      parsed.nodeStepLogs = parsed.nodeStepLogs || [];
+
+      parsed.clipWIP      = parsed.clipWIP || defaultClipWIP();
+      parsed.clipStepLogs = parsed.clipStepLogs || [];
+
+      return parsed;
+    }
+  } catch(e){
+    console.error(e);
+  }
+
+  const s = defaultState();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  return s;
+}
+
+function saveState(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  renderAll();
+}
+
+/* ---------- INVENTORY (ADD / EDIT / DELETE) ---------- */
+
+document.getElementById('invAddBtn').addEventListener('click', () => {
+  const name = document.getElementById('invName').value.trim();
+  const qty = Number(document.getElementById('invQty').value);
+  const user = document.getElementById('invUser').value.trim() || "unknown";
+
+  if (!name || isNaN(qty)) {
+    alert('Enter valid component name and quantity');
+    return;
+  }
+
+  let newQty;
+
+  if (currentEditInventoryKey) {
+    // EDIT mode: set exact quantity; if name changed, move to new key
+    if (currentEditInventoryKey !== name) {
+      delete state.inventory[currentEditInventoryKey];
+    }
+    newQty = qty;
+    currentEditInventoryKey = null;
+  } else {
+    // Normal mode: add/subtract
+    const existing = state.inventory[name] || { qty: 0, lastUpdated: "", lastUser: "" };
+    newQty = existing.qty + qty;
+  }
+
+  state.inventory[name] = {
+    qty: newQty,
+    lastUpdated: new Date().toLocaleString(),
+    lastUser: user
+  };
+
+  // SEND INVENTORY UPDATE TO MAKE → AIRTABLE
+  sendToMake(MAKE_INV_WEBHOOK, {
+    component: name,
+    qty: newQty,
+    updatedAt: new Date().toISOString(),
+    updatedBy: user
+  });
+
+  saveState();
+
+  document.getElementById('invName').value = '';
+  document.getElementById('invQty').value = '';
+});
+
+function editInventory(name) {
+  const item = state.inventory[name];
+  if (!item) return;
+
+  currentEditInventoryKey = name;
+  document.getElementById('invName').value = name;
+  document.getElementById('invQty').value = item.qty;
+  document.getElementById('invUser').value = item.lastUser || '';
+
+  alert('Edit mode: adjust quantity (and optionally name) and press "Save Inventory".');
+}
+
+function deleteInventory(name) {
+  if (!confirm(`Delete inventory entry "${name}" completely? This cannot be undone.`)) return;
+  delete state.inventory[name];
+  saveState();
+}
+
+/* Inventory search */
+document.getElementById('invSearch').addEventListener('input', () => {
+  invSearchTerm = document.getElementById('invSearch').value.toLowerCase();
+  renderAll();
+});
+
+/* ---------- BOM (ADD / EDIT / DELETE) ---------- */
+
+document.getElementById('bomAddBtn').addEventListener('click', () => {
+  const p = document.getElementById('bomProduct').value.trim();
+  const c = document.getElementById('bomComponent').value.trim();
+  const q = Number(document.getElementById('bomQty').value);
+  const u = document.getElementById('bomUser').value.trim() || "unknown";
+
+  if(!p || !c || isNaN(q) || q<=0) {
+    alert('Enter valid BOM entry');
+    return;
+  }
+
+  if (currentEditBOMIndex !== null) {
+    // update existing BOM row
+    state.bom[currentEditBOMIndex] = {
+      product: p,
+      component: c,
+      qty: q,
+      createdAt: state.bom[currentEditBOMIndex].createdAt || new Date().toISOString(),
+      createdBy: u
+    };
+    currentEditBOMIndex = null;
+  } else {
+    // add new BOM row
+    state.bom.push({
+      product: p,
+      component: c,
+      qty: q,
+      createdAt: new Date().toISOString(),
+      createdBy: u
+    });
+  }
+
+  saveState();
+  document.getElementById('bomProduct').value = '';
+  document.getElementById('bomComponent').value = '';
+  document.getElementById('bomQty').value = '';
+});
+
+function editBOM(index) {
+  const row = state.bom[index];
+  if (!row) return;
+
+  currentEditBOMIndex = index;
+  document.getElementById('bomProduct').value = row.product;
+  document.getElementById('bomComponent').value = row.component;
+  document.getElementById('bomQty').value = row.qty;
+  document.getElementById('bomUser').value = row.createdBy || '';
+
+  alert('Edit mode: adjust BOM fields and press "Save BOM Entry".');
+}
+
+function deleteBOM(index) {
+  if (!confirm('Delete this BOM row? This affects future calculations.')) return;
+  state.bom.splice(index, 1);
+  saveState();
+}
+
+/* BOM search */
+document.getElementById('bomSearch').addEventListener('input', () => {
+  bomSearchTerm = document.getElementById('bomSearch').value.toLowerCase();
+  renderAll();
+});
+
+/* ---------- PRODUCTION (NODE & CLIP) ---------- */
+
+document.getElementById('prodAddBtn').addEventListener('click', () => {
+  const pInput = document.getElementById('prodProduct').value.trim();
+  const q = Number(document.getElementById('prodQty').value);
+  const u = document.getElementById('prodUser').value.trim() || "unknown";
+
+  if(!pInput || isNaN(q) || q<=0) {
+    alert('Enter valid production entry');
+    return;
+  }
+
+  const productName = pInput; // for new entries
+  const isDock = productName.toLowerCase() === 'dock';
+
+  if (isDock && currentEditProductionIndex === null) {
+    alert('For Dock, please use the "Dock Process Entry (S1–S9)" section, not this form.');
+    return;
+  }
+
+  // EDIT MODE
+  if (currentEditProductionIndex !== null) {
+    const oldEntry = state.production[currentEditProductionIndex];
+
+    if (oldEntry.product.toLowerCase() === 'dock') {
+      alert('Dock production is created from Dock WIP S9. Edit/delete it via Dock Step Log, not here.');
+      currentEditProductionIndex = null;
+      return;
+    }
+
+    const oldProduct = oldEntry.product;
+    const newQty = q;
+    const newOperator = u;
+
+    // Undo old consumption
+    const oldParts = state.bom.filter(b => b.product === oldProduct);
+    oldParts.forEach(part => {
+      const inv = state.inventory[part.component] || { qty:0, lastUpdated:"", lastUser:"" };
+      inv.qty = inv.qty + part.qty * oldEntry.qty;
+      inv.lastUpdated = new Date().toLocaleString();
+      inv.lastUser = (oldEntry.operator || "") + " (edit undo)";
+      state.inventory[part.component] = inv;
+    });
+
+    // Apply new consumption
+    let shortages = [];
+    oldParts.forEach(part => {
+      const have = (state.inventory[part.component]?.qty) || 0;
+      const need = part.qty * newQty;
+      if(have < need) shortages.push({component: part.component, have, need});
+    });
+
+    if(shortages.length>0) {
+      const msg = 'Shortages found for updated production:\n' +
+        shortages.map(s => `${s.component}: have ${s.have}, need ${s.need}`).join('\n') +
+        '\n\nProceed and allow negative inventory?';
+      if(!confirm(msg)) {
+        // revert undo (re-apply old consumption)
+        oldParts.forEach(part => {
+          const inv = state.inventory[part.component] || { qty:0, lastUpdated:"", lastUser:"" };
+          inv.qty = inv.qty - part.qty * oldEntry.qty;
+          inv.lastUpdated = new Date().toLocaleString();
+          inv.lastUser = (oldEntry.operator || "") + " (undo reverted)";
+          state.inventory[part.component] = inv;
+        });
+        return;
+      }
+    }
+
+    oldParts.forEach(part => {
+      const inv = state.inventory[part.component] || { qty:0, lastUpdated:"", lastUser:"" };
+      inv.qty = inv.qty - part.qty * newQty;
+      inv.lastUpdated = new Date().toLocaleString();
+      inv.lastUser = newOperator + " (edited production)";
+      state.inventory[part.component] = inv;
+    });
+
+    // Update production entry (keep product same)
+    state.production[currentEditProductionIndex] = {
+      product: oldProduct,
+      qty: newQty,
+      ts: new Date().toISOString(),
+      operator: newOperator
+    };
+
+    currentEditProductionIndex = null;
+    saveState();
+    document.getElementById('prodProduct').value = '';
+    document.getElementById('prodQty').value = '';
+    return;
+  }
+
+  // NEW ENTRY MODE (for Node & Clip)
+  if (productName.toLowerCase() === 'dock') {
+    alert('For Dock, please use the "Dock Process Entry (S1–S9)" section.');
+    return;
+  }
+
+  const parts = state.bom.filter(b => b.product === productName);
+  if(parts.length === 0) {
+    if(!confirm('No BOM found for this product. Record production without consuming inventory?')) {
+      return;
+    }
+  }
+
+  let shortages = [];
+  parts.forEach(part => {
+    const have = (state.inventory[part.component]?.qty) || 0;
+    const need = part.qty * q;
+    if(have < need) shortages.push({component: part.component, have, need});
+  });
+
+  if(shortages.length>0) {
+    const msg = 'Shortages found:\n' +
+      shortages.map(s => `${s.component}: have ${s.have}, need ${s.need}`).join('\n') +
+      '\n\nProceed and allow negative inventory?';
+    if(!confirm(msg)) return;
+  }
+
+  // apply consumption
+  parts.forEach(part => {
+    const inv = state.inventory[part.component] || { qty:0, lastUpdated:"", lastUser:"" };
+    inv.qty = inv.qty - part.qty * q;
+    inv.lastUpdated = new Date().toLocaleString();
+    inv.lastUser = u + " (auto from production)";
+    state.inventory[part.component] = inv;
+  });
+
+  state.production.push({
+    product: productName,
+    qty: q,
+    ts: new Date().toISOString(),
+    operator: u
+  });
+
+  saveState();
+  document.getElementById('prodProduct').value = '';
+  document.getElementById('prodQty').value = '';
+});
+
+function editProduction(index) {
+  const entry = state.production[index];
+  if (!entry) return;
+
+  if (entry.product.toLowerCase() === 'dock') {
+    alert('Dock production comes from Dock WIP S9. Edit/delete via Dock Step Log instead.');
+    return;
+  }
+
+  currentEditProductionIndex = index;
+  document.getElementById('prodProduct').value = entry.product; // shown but product itself not changed
+  document.getElementById('prodQty').value = entry.qty;
+  document.getElementById('prodUser').value = entry.operator || '';
+
+  alert('Edit mode: change quantity/operator and press "Record Production". Product name will stay the same.');
+}
+
+function deleteProduction(index) {
+  const entry = state.production[index];
+  if (!entry) return;
+
+  if (!confirm('Delete this production log entry? This will NOT automatically fix inventory. You may need to manually adjust inventory.')) return;
+
+  // NOTE: we do NOT auto-undo inventory here (consistent with old behavior)
+  state.production.splice(index, 1);
+  saveState();
+}
+
+// ---------- DOCK PROCESS WIP (S1–S9) ----------
+
+document.getElementById('dockStepBtn').addEventListener('click', () => {
+  const selectedStep = document.getElementById('dockStep').value;
+  const qty = Number(document.getElementById('dockQty').value);
+  const user = document.getElementById('dockUser').value.trim() || "unknown";
+
+  if (!selectedStep) {
+    alert('Please select a Dock step (S1–S9).');
+    return;
+  }
+
+  if (isNaN(qty) || qty <= 0) {
+    alert('Enter a positive quantity for Dock step.');
+    return;
+  }
+
+  // ✅ EDIT MODE (only latest log)
+  if (currentEditDockIndex !== null) {
+    const originalLog = state.dockStepLogs[currentEditDockIndex];
+
+    if (currentEditDockIndex !== state.dockStepLogs.length - 1) {
+      alert('Only the latest Dock step can be edited to keep WIP & inventory consistent.');
+      currentEditDockIndex = null;
+      return;
+    }
+
+    // Undo old step
+    undoDockStepEffects(originalLog);
+
+    // Re-apply with new qty
+    applyDockStep(originalLog.step, qty, user, true, currentEditDockIndex);
+
+    currentEditDockIndex = null;
+    document.getElementById('dockQty').value = '';
+    return;
+  }
+
+  // ✅ NEW ENTRY MODE
+  applyDockStep(selectedStep, qty, user, false, null);
+  document.getElementById('dockQty').value = '';
+});
+// ✅ NODE STEP BUTTON
+document.getElementById('nodeStepBtn').addEventListener('click', () => {
+  const step = document.getElementById('nodeStep').value;
+  const qty  = Number(document.getElementById('nodeQty').value);
+  const user = document.getElementById('nodeUser').value.trim() || "unknown";
+
+  if (!step || !qty || qty <= 0) {
+    alert("Enter valid Node step and quantity");
+    return;
+  }
+
+  applyNodeStep(step, qty, user);
+  document.getElementById('nodeQty').value = '';
+});
+
+// ✅ CLIP STEP BUTTON
+document.getElementById('clipStepBtn').addEventListener('click', () => {
+  const step = document.getElementById('clipStep').value;
+  const qty  = Number(document.getElementById('clipQty').value);
+  const user = document.getElementById('clipUser').value.trim() || "unknown";
+
+  if (!step || !qty || qty <= 0) {
+    alert("Enter valid Clip step and quantity");
+    return;
+  }
+
+  applyClipStep(step, qty, user);
+  document.getElementById('clipQty').value = '';
+});
+
+  
+
+
+function applyDockStep(step, qty, user, isEdit, editIndex){
+  const stepIndex = dockSteps.indexOf(step);
+  if(stepIndex === -1) {
+    alert('Invalid Dock step.');
+    return;
+  }
+
+ // AUTO-BACKFILL PREVIOUS STEPS IF SKIPPED
+if (!isEdit) {
+  for (let i = 0; i < stepIndex; i++) {
+    const s = dockSteps[i];
+    const currentQty = state.dockWIP[s] || 0;
+
+    if (currentQty < qty) {
+      const missing = qty - currentQty;
+
+      // Auto-fill WIP
+      state.dockWIP[s] = qty;
+
+      // Consume inventory for skipped steps
+      const bomParts = dockProcessBOM[s] || [];
+      bomParts.forEach(part => {
+        const inv = state.inventory[part.component] || { qty: 0, lastUpdated:"", lastUser:"" };
+        inv.qty -= part.qty * missing;
+        inv.lastUpdated = new Date().toLocaleString();
+        inv.lastUser = user + ` (auto ${s})`;
+        state.inventory[part.component] = inv;
+      });
+    }
+  }
+}
+
+
+  // Check inventory for this step's consumption
+  const parts = dockProcessBOM[step] || [];
+  let shortages = [];
+  parts.forEach(part => {
+    const have = (state.inventory[part.component]?.qty) || 0;
+    const need = part.qty * qty;
+    if(have < need) {
+      shortages.push({component: part.component, have, need});
+    }
+  });
+
+  if(shortages.length > 0) {
+    const msg = 'Shortages found for this Dock step:\n' +
+      shortages.map(s => `${s.component}: have ${s.have}, need ${s.need}`).join('\n') +
+      '\n\nProceed and allow negative inventory?';
+    if(!confirm(msg)) return;
+  }
+
+  // Move WIP
+  if(step === "S1") {
+    state.dockWIP["S1"] = (state.dockWIP["S1"] || 0) + qty;
+  } else {
+    const prevStep = dockSteps[stepIndex - 1];
+    state.dockWIP[prevStep] = (state.dockWIP[prevStep] || 0) - qty;
+    state.dockWIP[step]     = (state.dockWIP[step] || 0) + qty;
+  }
+
+  // Consume inventory for this step
+  parts.forEach(part => {
+    const inv = state.inventory[part.component] || { qty:0, lastUpdated:"", lastUser:"" };
+    inv.qty = inv.qty - part.qty * qty;
+    inv.lastUpdated = new Date().toLocaleString();
+    inv.lastUser = user + ` (Dock ${step})`;
+    state.inventory[part.component] = inv;
+  });
+
+  const logEntry = {
+    step,
+    qty,
+    ts: new Date().toISOString(),
+    operator: user
+  };
+
+  if (isEdit && editIndex !== null) {
+    state.dockStepLogs[editIndex] = logEntry;
+  } else {
+    state.dockStepLogs.push(logEntry);
+  }
+
+  // If S9 (finished dock), also log in production[] for reports
+  if(step === "S9") {
+    state.production.push({
+      product: "Dock",
+      qty: qty,
+      ts: new Date().toISOString(),
+      operator: user + " (Dock S9)"
+    });
+  }
+
+  saveState();
+}
+
+function undoDockStepEffects(log) {
+  const step = log.step;
+  const qty = log.qty;
+  const user = log.operator || "unknown";
+  const stepIndex = dockSteps.indexOf(step);
+  const parts = dockProcessBOM[step] || [];
+
+  // Reverse WIP movement
+  if(step === "S1") {
+    state.dockWIP["S1"] = (state.dockWIP["S1"] || 0) - qty;
+  } else {
+    const prevStep = dockSteps[stepIndex - 1];
+    state.dockWIP[step]     = (state.dockWIP[step] || 0) - qty;
+    state.dockWIP[prevStep] = (state.dockWIP[prevStep] || 0) + qty;
+  }
+
+  // Add back inventory
+  parts.forEach(part => {
+    const inv = state.inventory[part.component] || { qty:0, lastUpdated:"", lastUser:"" };
+    inv.qty = inv.qty + part.qty * qty;
+    inv.lastUpdated = new Date().toLocaleString();
+    inv.lastUser = user + ` (undo Dock ${step})`;
+    state.inventory[part.component] = inv;
+  });
+
+  // If S9, also remove corresponding Dock production entry
+  if (step === "S9") {
+    for (let i = state.production.length - 1; i >= 0; i--) {
+      const p = state.production[i];
+      if (p.product === "Dock" && p.qty === qty && (p.operator || "").includes("Dock S9")) {
+        state.production.splice(i,1);
+        break;
+      }
+    }
+  }
+}
+
+function editDockStep(index) {
+  if (index !== state.dockStepLogs.length - 1) {
+    alert('Only the latest Dock step can be edited.');
+    return;
+  }
+  const log = state.dockStepLogs[index];
+  if (!log) return;
+
+  currentEditDockIndex = index;
+  document.getElementById('dockStep').value = log.step;
+  document.getElementById('dockQty').value = log.qty;
+  document.getElementById('dockUser').value = log.operator || '';
+
+  alert('Edit mode: you can change quantity/operator for this Dock step and press "Record Dock Step". Step itself stays the same.');
+}
+
+function deleteDockStep(index) {
+  if (index !== state.dockStepLogs.length - 1) {
+    alert('Only the latest Dock step can be deleted to keep WIP & inventory consistent.');
+    return;
+  }
+  const log = state.dockStepLogs[index];
+  if (!log) return;
+
+  if (!confirm('Delete this Dock step? This will undo its WIP movement and inventory consumption (and Dock production if S9).')) return;
+
+  // Undo its effects
+  undoDockStepEffects(log);
+
+  // Remove log
+  state.dockStepLogs.splice(index,1);
+  saveState();
+}
+/* ---------- NODE PROCESS WIP (S1–S8) ---------- */
+
+function applyNodeStep(step, qty, user, isEdit = false, editIndex = null){
+  const stepIndex = nodeSteps.indexOf(step);
+  if(stepIndex === -1) {
+    alert('Invalid Node step.');
+    return;
+  }
+
+  // AUTO-BACKFILL PREVIOUS NODE STEPS
+if (!isEdit) {
+  for (let i = 0; i < stepIndex; i++) {
+    const s = nodeSteps[i];
+    const currentQty = state.nodeWIP[s] || 0;
+
+    if (currentQty < qty) {
+      const missing = qty - currentQty;
+
+      // Fill WIP
+      state.nodeWIP[s] = qty;
+
+      // Consume inventory for skipped steps
+      const bomParts = nodeProcessBOM[s] || [];
+      bomParts.forEach(part => {
+        const inv = state.inventory[part.component] || { qty: 0, lastUpdated:"", lastUser:"" };
+        inv.qty -= part.qty * missing;
+        inv.lastUpdated = new Date().toLocaleString();
+        inv.lastUser = user + ` (auto ${s})`;
+        state.inventory[part.component] = inv;
+      });
+    }
+  }
+}
+
+
+  // Inventory check (same as Dock)
+  const parts = nodeProcessBOM[step] || [];
+  let shortages = [];
+  parts.forEach(part => {
+    const have = (state.inventory[part.component]?.qty) || 0;
+    const need = part.qty * qty;
+    if(have < need) shortages.push({component: part.component, have, need});
+  });
+
+  if(shortages.length > 0) {
+    const msg = 'Shortages found for this Node step:\n' +
+      shortages.map(s => `${s.component}: have ${s.have}, need ${s.need}`).join('\n') +
+      '\n\nProceed and allow negative inventory?';
+    if(!confirm(msg)) return;
+  }
+
+  // Move WIP (same as Dock)
+  if(step === "S1") {
+    state.nodeWIP["S1"] = (state.nodeWIP["S1"] || 0) + qty;
+  } else {
+    const prevStep = nodeSteps[stepIndex - 1];
+    state.nodeWIP[prevStep] = (state.nodeWIP[prevStep] || 0) - qty;
+    state.nodeWIP[step]     = (state.nodeWIP[step] || 0) + qty;
+  }
+
+  // Consume inventory
+  parts.forEach(part => {
+    const inv = state.inventory[part.component] || { qty:0, lastUpdated:"", lastUser:"" };
+    inv.qty = inv.qty - part.qty * qty;
+    inv.lastUpdated = new Date().toLocaleString();
+    inv.lastUser = user + ` (Node ${step})`;
+    state.inventory[part.component] = inv;
+  });
+
+  const logEntry = {
+    step,
+    qty,
+    ts: new Date().toISOString(),
+    operator: user
+  };
+
+  state.nodeStepLogs.push(logEntry);
+
+  // Final step goes to production (EXACTLY like Dock S9)
+  if(step === "S8") {
+    state.production.push({
+      product: "Node",
+      qty: qty,
+      ts: new Date().toISOString(),
+      operator: user + " (Node S8)"
+    });
+  }
+
+  saveState();
+}
+
+/* ---------- CLIP PROCESS WIP (S1–S10) ---------- */
+
+function applyClipStep(step, qty, user, isEdit = false, editIndex = null){
+  const stepIndex = clipSteps.indexOf(step);
+  if(stepIndex === -1) {
+    alert('Invalid Clip step.');
+    return;
+  }
+
+  // AUTO-BACKFILL PREVIOUS CLIP STEPS
+if (!isEdit) {
+  for (let i = 0; i < stepIndex; i++) {
+    const s = clipSteps[i];
+    const currentQty = state.clipWIP[s] || 0;
+
+    if (currentQty < qty) {
+      const missing = qty - currentQty;
+
+      // Fill WIP
+      state.clipWIP[s] = qty;
+
+      // Consume inventory for skipped steps
+      const bomParts = clipProcessBOM[s] || [];
+      bomParts.forEach(part => {
+        const inv = state.inventory[part.component] || { qty: 0, lastUpdated:"", lastUser:"" };
+        inv.qty -= part.qty * missing;
+        inv.lastUpdated = new Date().toLocaleString();
+        inv.lastUser = user + ` (auto ${s})`;
+        state.inventory[part.component] = inv;
+      });
+    }
+  }
+}
+
+
+  // Inventory check
+  const parts = clipProcessBOM[step] || [];
+  let shortages = [];
+  parts.forEach(part => {
+    const have = (state.inventory[part.component]?.qty) || 0;
+    const need = part.qty * qty;
+    if(have < need) shortages.push({component: part.component, have, need});
+  });
+
+  if(shortages.length > 0) {
+    const msg = 'Shortages found for this Clip step:\n' +
+      shortages.map(s => `${s.component}: have ${s.have}, need ${s.need}`).join('\n') +
+      '\n\nProceed and allow negative inventory?';
+    if(!confirm(msg)) return;
+  }
+
+  // Move WIP
+  if(step === "S1") {
+    state.clipWIP["S1"] = (state.clipWIP["S1"] || 0) + qty;
+  } else {
+    const prevStep = clipSteps[stepIndex - 1];
+    state.clipWIP[prevStep] = (state.clipWIP[prevStep] || 0) - qty;
+    state.clipWIP[step]     = (state.clipWIP[step] || 0) + qty;
+  }
+
+  // Consume inventory
+  parts.forEach(part => {
+    const inv = state.inventory[part.component] || { qty:0, lastUpdated:"", lastUser:"" };
+    inv.qty = inv.qty - part.qty * qty;
+    inv.lastUpdated = new Date().toLocaleString();
+    inv.lastUser = user + ` (Clip ${step})`;
+    state.inventory[part.component] = inv;
+  });
+
+  const logEntry = {
+    step,
+    qty,
+    ts: new Date().toISOString(),
+    operator: user
+  };
+
+  state.clipStepLogs.push(logEntry);
+
+  // Final step goes to production
+  if(step === "S10") {
+    state.production.push({
+      product: "Clip",
+      qty: qty,
+      ts: new Date().toISOString(),
+      operator: user + " (Clip S10)"
+    });
+  }
+
+  saveState();
+}
+
+
+/* ---------- CAPACITY CALC ---------- */
+
+document.getElementById('calcBtn').addEventListener('click', () => {
+  const products = [...new Set(state.bom.map(b => b.product))];
+  let out = '';
+  products.forEach(prod => {
+    const parts = state.bom.filter(b => b.product === prod);
+    if(parts.length === 0) {
+      out += prod + ': no BOM defined\n';
+      return;
+    }
+    const limits = parts.map(p => Math.floor(((state.inventory[p.component]?.qty) || 0) / p.qty));
+    const min = Math.min(...limits);
+    out += prod + ': You can produce ' + min + ' units (limiting components:\n';
+    parts.forEach(p => {
+      out += `  - ${p.component}: have ${(state.inventory[p.component]?.qty) || 0}, need ${p.qty} per unit\n`;
+    });
+    out += ')\n\n';
+  });
+  document.getElementById('calcOutput').textContent = out;
+});
+
+/* ---------- DAILY PRODUCTION REPORT ---------- */
+
+document.getElementById('reportBtn').addEventListener('click', () => {
+  const dateInput = document.getElementById('reportDate').value;
+  if(!dateInput) {
+    alert('Please choose a date');
+    return;
+  }
+  const reportDiv = document.getElementById('dailyReportArea');
+
+  const summary = {};
+
+  state.production.forEach(entry => {
+    const d = new Date(entry.ts);
+    const iso = d.toISOString().slice(0,10);
+    if(iso === dateInput) {
+      summary[entry.product] = (summary[entry.product] || 0) + entry.qty;
+    }
+  });
+
+  if(Object.keys(summary).length === 0) {
+    reportDiv.innerHTML = `<p>No production recorded for ${dateInput}.</p>`;
+    return;
+  }
+
+  reportDiv.innerHTML = `
+    <h4>Daily Production Report for ${dateInput}</h4>
+    <table>
+      <tr><th>Product</th><th>Total Qty</th></tr>
+      ${Object.entries(summary).map(([product, qty]) =>
+        `<tr><td>${product}</td><td>${qty}</td></tr>`
+      ).join('')}
+    </table>
+  `;
+});
+
+/* ---------- PRINT / SAVE REPORT AS PDF ---------- */
+
+document.getElementById('printBtn').addEventListener('click', () => {
+  window.print();
+});
+
+/* ---------- EXPORT / IMPORT ---------- */
+document.getElementById('exportJsonBtn').addEventListener('click', () => {
+  const dataStr = JSON.stringify(state, null, 2);
+  const blob = new Blob([dataStr], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = "assistme_full_backup.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  URL.revokeObjectURL(url);
+});
+
+
+document.getElementById('exportBtn').addEventListener('click', () => {
+  const header = ['Date','Time','Product','Quantity','Operator'];
+  const lines = [header.join(',')];
+
+  state.production.forEach(p => {
+    const d = new Date(p.ts);
+    const date = d.toLocaleDateString();
+    const time = d.toLocaleTimeString();
+    const product = (p.product || '').replace(/,/g,';');
+    const operator = (p.operator || '').replace(/,/g,';');
+    lines.push([date, time, product, p.qty, operator].join(','));
+  });
+
+  const csv = lines.join('\r\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'production_log.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById('importBtn').addEventListener('click', () => {
+  document.getElementById('fileInput').click();
+});
+
+document.getElementById('fileInput').addEventListener('change', (ev) => {
+  const f = ev.target.files[0];
+  if(!f) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const imported = JSON.parse(e.target.result);
+      if(!imported.inventory || !imported.bom || !imported.production) throw new Error('Invalid file');
+      state = imported;
+      state.inventory    = normaliseInventory(state.inventory);
+      state.production   = state.production || [];
+      state.bom          = state.bom || [];
+      state.dockWIP      = state.dockWIP || defaultDockWIP();
+      state.dockStepLogs = state.dockStepLogs || [];
+      saveState();
+      alert('Import complete');
+    } catch(err) {
+      alert('Import failed: ' + err.message);
+    }
+  };
+  reader.readAsText(f);
+});
+
+/* ---------- RESET ---------- */
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  if(!confirm('Reset EVERYTHING? This cannot be undone.')) return;
+  localStorage.removeItem(STORAGE_KEY);
+  state = defaultState();
+  saveState();
+  alert('Reset done');
+});
+
+/* ---------- MIN STOCK THRESHOLD (100 Docks, 80 Nodes, 200 Clips) ---------- */
+
+function computeThresholds() {
+  const targets = { Dock: 100, Node: 80, Clip: 200 };
+  const thresholds = {};
+  state.bom.forEach(row => {
+    const targetUnits = targets[row.product] || 0;
+    if (!targetUnits) return;
+    const comp = row.component;
+    thresholds[comp] = (thresholds[comp] || 0) + row.qty * targetUnits;
+  });
+  return thresholds;
+}
+
+/* ---------- INVENTORY OUT (CONSUMED) ---------- */
+
+function computeConsumed() {
+  const consumed = {};
+
+  // Node & Clip via normal production[]
+  state.production.forEach(entry => {
+    const prodName = entry.product;
+    const qtyProduced = Number(entry.qty) || 0;
+    const bomParts = state.bom.filter(b => b.product === prodName);
+    bomParts.forEach(part => {
+      const comp = part.component;
+      const perUnit = Number(part.qty) || 0;
+      consumed[comp] = (consumed[comp] || 0) + perUnit * qtyProduced;
+    });
+  });
+
+  // Dock via step logs (more accurate)
+  state.dockStepLogs.forEach(log => {
+    const stepBOM = dockProcessBOM[log.step] || [];
+    stepBOM.forEach(part => {
+      const comp = part.component;
+      const perUnit = part.qty;
+      consumed[comp] = (consumed[comp] || 0) + perUnit * log.qty;
+    });
+  });
+
+  return consumed;
+}
+
+/* ---------- SCORECARD: MAX BUILDABLE ---------- */
+
+function computeMaxUnits(productName) {
+  const parts = state.bom.filter(b => b.product === productName);
+  if (parts.length === 0) return 0;
+  const limits = parts.map(part => {
+    const have = (state.inventory[part.component]?.qty) || 0;
+    const perUnit = Number(part.qty) || 0;
+    if (perUnit <= 0) return Infinity;
+    return Math.floor(have / perUnit);
+  });
+  const min = Math.min(...limits);
+  if (!isFinite(min)) return 0;
+  return min;
+}
+
+/* ---------- RENDER UI ---------- */
+
+function renderAll(){
+  const thresholds = computeThresholds();
+  const consumed = computeConsumed();
+
+  // Update scorecard
+  document.getElementById('scoreDock').textContent = computeMaxUnits("Dock");
+  document.getElementById('scoreNode').textContent = computeMaxUnits("Node");
+  document.getElementById('scoreClip').textContent = computeMaxUnits("Clip");
+
+  // ================= INVENTORY (UNCHANGED) =================
+
+  const invArea = document.getElementById('invTableArea');
+
+  const entries = Object.keys(state.inventory)
+    .filter(k => !invSearchTerm || k.toLowerCase().includes(invSearchTerm))
+    .map(k => {
+      const item = state.inventory[k];
+      const threshold = thresholds[k] || 0;
+      const used = consumed[k] || 0;
+
+      let rowClass = "inv-ok";
+      if (item.qty <= 0) rowClass = "inv-critical";
+      else if (threshold > 0) {
+        if (item.qty < threshold) rowClass = "inv-low";
+        else if (item.qty < threshold * 2) rowClass = "inv-medium";
+      } else {
+        if (item.qty < 50) rowClass = "inv-low";
+        else if (item.qty < 100) rowClass = "inv-medium";
+      }
+
+      let severityRank = 4;
+      if (rowClass === 'inv-critical') severityRank = 1;
+      else if (rowClass === 'inv-low') severityRank = 2;
+      else if (rowClass === 'inv-medium') severityRank = 3;
+
+      return { name: k, item, threshold, used, rowClass, severityRank };
+    });
+
+  entries.sort((a,b) => a.severityRank - b.severityRank || a.name.localeCompare(b.name));
+
+  const invRows = entries.map(({name, item, threshold, used, rowClass}) => {
+    const safeKey = name.replace(/'/g, "\\'");
+    return `<tr class="${rowClass}">
+      <td>${name}</td>
+      <td>${item.qty}</td>
+      <td>${threshold || ''}</td>
+      <td>${used || 0}</td>
+      <td>${item.lastUpdated || ''}</td>
+      <td>${item.lastUser || ''}</td>
+      <td>
+        <button class="small-btn" onclick="editInventory('${safeKey}')">Edit</button>
+        <button class="small-btn" onclick="deleteInventory('${safeKey}')">Delete</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  invArea.innerHTML = `
+    <table>
+      <tr>
+        <th>Component</th><th>Qty</th><th>Min Stock</th><th>Inventory OUT</th>
+        <th>Last Updated</th><th>Last Updated By</th><th>Actions</th>
+      </tr>
+      ${invRows}
+    </table>
+  `;
+
+  // ================= BOM (UNCHANGED) =================
+
+  const bomArea = document.getElementById('bomTableArea');
+  const bomRows = state.bom
+    .filter(b =>
+      !bomSearchTerm ||
+      b.product.toLowerCase().includes(bomSearchTerm) ||
+      b.component.toLowerCase().includes(bomSearchTerm)
+    )
+    .map((b, idx) => `
+      <tr>
+        <td>${b.product}</td>
+        <td>${b.component}</td>
+        <td>${b.qty}</td>
+        <td>${b.createdBy || ''}</td>
+        <td>${b.createdAt ? new Date(b.createdAt).toLocaleString() : ''}</td>
+        <td>
+          <button class="small-btn" onclick="editBOM(${idx})">Edit</button>
+          <button class="small-btn" onclick="deleteBOM(${idx})">Delete</button>
+        </td>
+      </tr>
+    `).join('');
+
+  bomArea.innerHTML = `
+    <table>
+      <tr>
+        <th>Product</th><th>Component</th><th>Qty/Unit</th>
+        <th>Added By</th><th>Added At</th><th>Actions</th>
+      </tr>
+      ${bomRows}
+    </table>
+  `;
+
+  // ================= PRODUCTION LOG (UNCHANGED) =================
+
+  const prodArea = document.getElementById('prodLogArea');
+  const prodRows = state.production
+    .map((p, idx) => ({ p, idx }))
+    .slice()
+    .reverse()
+    .map(({p, idx}) => {
+      const d = new Date(p.ts);
+      return `<tr>
+        <td>${d.toLocaleDateString()}</td>
+        <td>${d.toLocaleTimeString()}</td>
+        <td>${p.product}</td>
+        <td>${p.qty}</td>
+        <td>${p.operator || ''}</td>
+        <td>
+          <button class="small-btn" onclick="editProduction(${idx})">Edit</button>
+          <button class="small-btn" onclick="deleteProduction(${idx})">Delete</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+  prodArea.innerHTML = `
+    <table>
+      <tr>
+        <th>Date</th><th>Time</th><th>Product</th>
+        <th>Qty</th><th>Operator</th><th>Actions</th>
+      </tr>
+      ${prodRows}
+    </table>
+  `;
+
+  // ================= DOCK WIP (UNCHANGED) =================
+
+  const dockWIPArea = document.getElementById('dockWIPArea');
+  const wipRows = dockSteps.map(s => `
+    <tr>
+      <td>${dockStepDescriptions[s] || s}</td>
+      <td>${state.dockWIP[s] || 0}</td>
+    </tr>
+  `).join('');
+
+  dockWIPArea.innerHTML = `
+    <table>
+      <tr><th>Step</th><th>Qty in WIP</th></tr>
+      ${wipRows}
+    </table>
+  `;
+
+  const dockLogArea = document.getElementById('dockLogArea');
+  const logRows = state.dockStepLogs
+    .map((l, idx) => ({ l, idx }))
+    .slice()
+    .reverse()
+    .map(({l, idx}) => {
+      const d = new Date(l.ts);
+      return `<tr>
+        <td>${d.toLocaleDateString()}</td>
+        <td>${d.toLocaleTimeString()}</td>
+        <td>${dockStepDescriptions[l.step] || l.step}</td>
+        <td>${l.qty}</td>
+        <td>${l.operator || ''}</td>
+        <td>
+          <button class="small-btn" onclick="editDockStep(${idx})">Edit</button>
+          <button class="small-btn" onclick="deleteDockStep(${idx})">Delete</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+  dockLogArea.innerHTML = `
+    <table>
+      <tr><th>Date</th><th>Time</th><th>Step</th>
+      <th>Qty</th><th>Operator</th><th>Actions</th></tr>
+      ${logRows}
+    </table>
+  `;
+
+  // ================= NODE WIP (NEW) =================
+
+  if (document.getElementById('nodeWIPArea')) {
+    const nodeArea = document.getElementById('nodeWIPArea');
+
+    const nodeRows = nodeSteps.map(s => `
+      <tr>
+        <td>${nodeStepDescriptions[s] || s}</td>
+        <td>${state.nodeWIP[s] || 0}</td>
+      </tr>
+    `).join('');
+
+    nodeArea.innerHTML = `
+      <table>
+        <tr><th>Node Step</th><th>Qty in WIP</th></tr>
+        ${nodeRows}
+      </table>
+    `;
+  }
+
+  if (document.getElementById('nodeLogArea')) {
+    const nodeLogArea = document.getElementById('nodeLogArea');
+
+    const nodeLogRows = state.nodeStepLogs
+      .slice()
+      .reverse()
+      .map(l => {
+        const d = new Date(l.ts);
+        return `<tr>
+          <td>${d.toLocaleDateString()}</td>
+          <td>${d.toLocaleTimeString()}</td>
+          <td>${nodeStepDescriptions[l.step]}</td>
+          <td>${l.qty}</td>
+          <td>${l.operator}</td>
+        </tr>`;
+      }).join('');
+
+    nodeLogArea.innerHTML = `
+      <table>
+        <tr><th>Date</th><th>Time</th><th>Step</th><th>Qty</th><th>Operator</th></tr>
+        ${nodeLogRows}
+      </table>
+    `;
+  }
+
+  // ================= CLIP WIP (NEW) =================
+
+  if (document.getElementById('clipWIPArea')) {
+    const clipArea = document.getElementById('clipWIPArea');
+
+    const clipRows = clipSteps.map(s => `
+      <tr>
+        <td>${clipStepDescriptions[s] || s}</td>
+        <td>${state.clipWIP[s] || 0}</td>
+      </tr>
+    `).join('');
+
+    clipArea.innerHTML = `
+      <table>
+        <tr><th>Clip Step</th><th>Qty in WIP</th></tr>
+        ${clipRows}
+      </table>
+    `;
+  }
+
+  if (document.getElementById('clipLogArea')) {
+    const clipLogArea = document.getElementById('clipLogArea');
+
+    const clipLogRows = state.clipStepLogs
+      .slice()
+      .reverse()
+      .map(l => {
+        const d = new Date(l.ts);
+        return `<tr>
+          <td>${d.toLocaleDateString()}</td>
+          <td>${d.toLocaleTimeString()}</td>
+          <td>${clipStepDescriptions[l.step]}</td>
+          <td>${l.qty}</td>
+          <td>${l.operator}</td>
+        </tr>`;
+      }).join('');
+
+    clipLogArea.innerHTML = `
+      <table>
+        <tr><th>Date</th><th>Time</th><th>Step</th><th>Qty</th><th>Operator</th></tr>
+        ${clipLogRows}
+      </table>
+    `;
+  }
+
+}
+function fetchFromOffline() {
+  const key = "offline_events";
+  const events = JSON.parse(localStorage.getItem(key) || "[]");
+
+  if (events.length === 0) return;
+
+  console.log("🟡 OFFLINE EVENTS RECEIVED:", events);
+
+  let applied = false;
+
+  events.forEach(e => {
+    const exists =
+      state.dockStepLogs.some(l => l.ts === e.timestamp && l.step === e.step) ||
+      state.nodeStepLogs.some(l => l.ts === e.timestamp && l.step === e.step) ||
+      state.clipStepLogs.some(l => l.ts === e.timestamp && l.step === e.step);
+
+    if (exists) return;
+
+    if (e.product === "Dock") {
+      applyDockStep(e.step, e.qty, e.operator);
+      applied = true;
+    }
+
+    if (e.product === "Node") {
+      applyNodeStep(e.step, e.qty, e.operator);
+      applied = true;
+    }
+
+    if (e.product === "Clip") {
+      applyClipStep(e.step, e.qty, e.operator);
+      applied = true;
+    }
+  });
+
+  // 🔥 CRITICAL: clear events AFTER applying
+  if (applied) {
+    localStorage.removeItem(key);
+    console.log("🟢 OFFLINE EVENTS APPLIED & CLEARED");
+  }
+}
+
+
+renderAll();
+fetchFromOffline();
+
+
+// 🔥 RUN ON PAGE LOAD
+fetchFromOffline();
+
+// 🔁 KEEP POLLING (offline test)
+if (OFFLINE_MODE) {
+  setInterval(fetchFromOffline, 2000);
+}
+
+
+;
+
+</script>
+</body>
+</html>
